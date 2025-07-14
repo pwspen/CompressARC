@@ -90,7 +90,7 @@ def plot_problem(logger):
                         color=(59/255, 59/255, 59/255),
                         linewidth=0.3)
     plt.axis('off')
-    plt.savefig('plots/' + logger.task.task_name + '_problem.png', bbox_inches='tight', pad_inches=0)
+    plt.savefig(f'results/{logger.task.task_name}/problem.png', bbox_inches='tight', pad_inches=0)
     plt.close()
 
 def plot_solution(logger, fname=None):

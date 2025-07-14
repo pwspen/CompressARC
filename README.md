@@ -1,14 +1,11 @@
-<a href="https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html"><img src="teaser_figure_w_title.png"></a>
-This is the code base for the [ARC-AGI Without Pretraining](https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html) project. The Kaggle competition template version can be found [here](https://www.kaggle.com/code/iliao2345/arc-agi-without-pretraining/notebook?scriptVersionId=232760209).
+[Source](https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html#architecture)
 
 # Installation
 
 ```
-> git clone https://github.com/iliao2345/CompressARC.git
+> git clone https://github.com/pwspen/CompressARC.git
 > cd CompressARC
-> python -m venv arc_agi_without_pretraining
-> source arc_agi_without_pretraining/bin/activate
-> pip install -r requirements.txt
+> uv sync
 ```
 
 # How to solve an ARC-AGI task
@@ -73,14 +70,3 @@ A basic description of the code files in this repo:
 Code for different files may be written in slightly different styles due to polishing of individual code files by ChatGPT.
 
 
-# Citation
-
-If you'd like to cite this blog post, use the following entry:
-```
-@online{liao2025arcagiwithoutpretraining,
-	author = {Isaac Liao and Albert Gu},
-	title = {ARC-AGI Without Pretraining},
-	year = {2025},
-	url = {https://iliao2345.github.io/blog_posts/arc_agi_without_pretraining/arc_agi_without_pretraining.html},
-}
-```

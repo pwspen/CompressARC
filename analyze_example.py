@@ -1,10 +1,12 @@
 import os
 import pickle
 from tqdm import tqdm
+import io
 
 import numpy as np
 import torch
 import matplotlib.pyplot as plt
+import imageio
 
 import train
 import preprocessing
@@ -20,8 +22,9 @@ import visualization
 This file allows you to train one model on one task, and see plots of what
 the process and end result looks like. You can input the training split and
 the task code, and it will:
-- Train a model for 1500 steps,
-- Plot sampled solutions from the model at every 50 steps,
+- Train a model for the specified number of steps,
+- Create a GIF showing sampled solutions from the model at every 100 steps,
+  with each frame displayed for 2 seconds,
 - Plot the KL and reconstruction error over time,
 - Plot the contribution of each tensor shape to the KL over time,
 - Show top principal components of each tensor that still contributes to
@@ -39,9 +42,21 @@ if __name__ == "__main__":
 
     # Some interesting tasks: 272f95fa, 6d75e8bb, 6cdd2623, 41e4d17e, 2bee17df
     # 228f6490, 508bd3b6, 2281f1f4, ecdecbb3
-    split = input('Enter which split you want to find the task in (training, evaluation, test): ')
-    task_name = input('Enter which task you want to analyze (eg. 272f95fa): ')
-    folder = task_name + '/'
+    split = input('Enter which split you want to find the task in (training (def), evaluation, test): ')
+    if split.strip() == '':
+        split = 'training'
+    task_name = input('Enter which task you want to analyze (def: 272f95fa): ')
+    if task_name.strip() == '':
+        task_name = '272f95fa'
+    folder = f'results/{task_name}/'
+
+    save_dir = f'results/{task_name}'
+
+    n_iterations = input('Enter number of iterations (def: 500): ')
+    if n_iterations.strip() == '':
+        n_iterations = 500
+    else:
+        n_iterations = int(n_iterations)
     print('Performing a training run on task', task_name,
           'and placing the results in', folder)
     os.makedirs(folder, exist_ok=True)
@@ -52,21 +67,36 @@ if __name__ == "__main__":
     optimizer = torch.optim.Adam(model.weights_list, lr=0.01, betas=(0.5, 0.9))
     train_history_logger = solution_selection.Logger(task)
     visualization.plot_problem(train_history_logger)
-
-    # Perform training for 1500 iterations
-    n_iterations = 1500
+    
+    # Store frames for GIF creation
+    gif_frames = []
+    plot_every_steps = 100
+    
     for train_step in tqdm(range(n_iterations)):
         train.take_step(task, model, optimizer, train_step, train_history_logger)
         
-        # Plot solutions every 50 steps
-        if (train_step+1) % 50 == 0:
-            visualization.plot_solution(train_history_logger,
-                fname=folder + task_name + '_at_' + str(train_step+1) + ' steps.png')
-            visualization.plot_solution(train_history_logger,
-                fname=folder + task_name + '_at_' + str(train_step+1) + ' steps.pdf')
+        if (train_step+1) % plot_every_steps == 0:
+            # Create a temporary filename for this frame
+            temp_fname = f'{save_dir}/temp_frame.png'
+            
+            # Generate the plot and save temporarily
+            visualization.plot_solution(train_history_logger, fname=temp_fname)
+            
+            # Read the image and add to gif frames
+            frame = imageio.imread(temp_fname)
+            gif_frames.append(frame)
+            
+            # Clean up temporary file
+            os.remove(temp_fname)
+    
+    if gif_frames:
+        gif_filename = f'{save_dir}/training_progress.gif'
+        frame_dur_s = 1.0
+        imageio.mimsave(gif_filename, gif_frames, fps=1/frame_dur_s)
+        print(f'Training progress GIF saved as: {gif_filename}')
 
     # Save the metrics, model weights, and learned representations.
-    np.savez(folder + task_name + '_KL_curves.npz',
+    np.savez(f'{save_dir}/KL_curves.npz',
              KL_curves={key:np.array(val) for key, val in train_history_logger.KL_curves.items()},
              reconstruction_error_curve=np.array(train_history_logger.reconstruction_error_curve),
              multiposteriors=model.multiposteriors,
@@ -74,7 +104,7 @@ if __name__ == "__main__":
              decode_weights=model.decode_weights)
 
     # Load the metrics, model weights, and learned representations.
-    stored_data = np.load(folder + task_name + '_KL_curves.npz', allow_pickle=True)
+    stored_data = np.load(f'{save_dir}/KL_curves.npz', allow_pickle=True)
     KL_curves = stored_data['KL_curves'][()]
     reconstruction_error_curve = stored_data['reconstruction_error_curve']
     multiposteriors = stored_data['multiposteriors'][()]
@@ -82,50 +112,52 @@ if __name__ == "__main__":
     decode_weights = stored_data['decode_weights'][()]
     
     # Plot the KL curves over time.
-    # For specific tasks that we found interesting, we wrote some
-    # code to color interesting KL components differently.
-    special_curve_colors = {
-            '272f95fa': {
-                'dims': [(1,0,0,1,0), (1,0,0,0,1), (0,1,1,0,0), (0,1,0,0,0)],
-                'colors': [(1, 0, 0), (0, 1, 0), (0, 0.5, 1), (0.5, 0, 1)]
-            },
-            '6cdd2623': {
-                'dims': [(1,0,0,1,0), (1,0,0,0,1), (1,1,0,0,0), (1,0,0,1,1), (0,0,1,0,0)],
-                'colors': [(1, 0.6, 0), (0, 1, 0), (0, 0.5, 1), (0.5, 0, 1), (1, 0, 0.5)]
-            },
-            '41e4d17e': {
-                'dims': [(1,0,0,1,1), (0,1,0,0,0)],
-                'colors': [(1, 0, 0), (0, 0, 1)]
-            },
-            '6d75e8bb': {
-                'dims': [(1,0,0,1,0), (1,0,0,0,1), (1,0,0,1,1), (0,1,0,0,0)],
-                'colors': [(1, 0, 0), (0, 1, 0), (0, 0.5, 1), (0.5, 0, 1)]
-            }
-    }
-    fig, ax = plt.subplots()
+    # Sort curves by their final values and assign colors/labels to top 5
+    
+    # Get final values for each curve and sort
+    curve_final_values = []
     for component_name, curve in KL_curves.items():
-        line_color = (0.5, 0.5, 0.5)
-        label = None
-        if task_name in special_curve_colors:
-            dims_list = special_curve_colors[task_name]['dims']
-            colors_list = special_curve_colors[task_name]['colors']
-            for dims, color in zip(dims_list, colors_list):
-                if tuple(eval(component_name)) == dims:
-                    line_color = color
-                    axis_names = ['example', 'color', 'direction', 'height', 'width']
-                    axis_names = [axis_name
-                        for axis_name, axis_exists in zip(axis_names, dims) if axis_exists]
-                    label = '(' + ', '.join(axis_names) + ', channel)'
+        final_value = curve[-1] if len(curve) > 0 else 0
+        curve_final_values.append((component_name, curve, final_value))
+    
+    # Sort by final value (descending)
+    curve_final_values.sort(key=lambda x: x[2], reverse=True)
+    
+    # Define colors for top 5 curves (easy to distinguish)
+    top_colors = [
+        (1, 0, 0),      # Red
+        (0, 0, 1),      # Blue  
+        (0, 0.8, 0),    # Green
+        (1, 0.5, 0),    # Orange
+        (0.8, 0, 0.8),  # Purple
+    ]
+    
+    fig, ax = plt.subplots()
+    has_labels = False
+    
+    for i, (component_name, curve, final_value) in enumerate(curve_final_values):
+        if i < 5:  # Top 5 curves get colors and labels
+            line_color = top_colors[i]
+            # Create label from component dimensions
+            dims = tuple(eval(component_name))
+            axis_names = ['example', 'color', 'direction', 'height', 'width']
+            axis_names = [axis_name
+                for axis_name, axis_exists in zip(axis_names, dims) if axis_exists]
+            label = '(' + ', '.join(axis_names) + ', channel)'
+            has_labels = True
+        else:  # Rest get gray color, no label
+            line_color = (0.5, 0.5, 0.5)
+            label = None
+        
         ax.plot(np.arange(curve.shape[0]), curve, color=line_color, label=label)
-    if task_name == '6cdd2623':
-        ax.set_ylim((0.3, 4e4))
 
-    ax.legend()
+    if has_labels:
+        ax.legend()
     plt.yscale('log')
     plt.xlabel('step')
     plt.ylabel('KL contribution')
     ax.grid(which='both', linestyle='-', linewidth='0.5', color='gray')
-    plt.savefig(folder + task_name + '_KL_components.png', bbox_inches='tight')
+    plt.savefig(f'{save_dir}/KL_components.png', bbox_inches='tight')
     plt.close()
 
     # Plot the KL vs reconstruction error
@@ -142,7 +174,7 @@ if __name__ == "__main__":
     plt.xlabel('step')
     plt.ylabel('total KL or reconstruction error')
     ax.grid(which='both', linestyle='-', linewidth='0.5', color='gray')
-    plt.savefig(folder + task_name + '_KL_vs_reconstruction.png', bbox_inches='tight')
+    plt.savefig(f'{save_dir}/KL_vs_reconstruction.png', bbox_inches='tight')
     plt.close()
 
     # Get the learned representation tensors
@@ -174,6 +206,10 @@ if __name__ == "__main__":
     for dims in dims_to_plot:
         tensor = means[dims]
 
+        max_components = 1
+        cutoff = 0.01
+        direction_names = ["↓", "↘", "→", "↗", "↑", "↖", "←", "↙"]
+
         orig_shape = tensor.shape
         if len(orig_shape) == 2:
             tensor = tensor[None,:,:]
@@ -181,10 +217,12 @@ if __name__ == "__main__":
         if len(orig_shape) == 3:
             tensor = np.reshape(tensor, (-1, orig_shape[-1]))
             U, S, Vh = np.linalg.svd(tensor)  # Get top 3 principal components
-            for component_num in range(3):
+            for component_num in range(max_components):
                 component = np.reshape(U[:,component_num], orig_shape[:-1])
                 component = component / np.max(np.abs(component))
                 strength = S[component_num] / tensor.shape[0]  # Calculate component strength
+                if strength < cutoff:
+                    continue
 
                 # Show the component
                 fig, ax = plt.subplots()
@@ -232,7 +270,6 @@ if __name__ == "__main__":
                         ticklabel.set_fontweight("bold")
 
                 # Tick labels for direction axis
-                direction_names = ["↓", "↘", "→", "↗", "↑", "↖", "←", "↙"]
                 if x_dim == 'direction':
                     ax.set_yticks(np.arange(8))
                     ax.set_yticklabels(direction_names)
@@ -245,17 +282,19 @@ if __name__ == "__main__":
                 # Standard tick labels for height and width axes
 
                 ax.set_title('component' + str(component_num) + ', strength = ' + str(float(strength)))
-                plt.savefig(folder + task_name + '_' + tensor_name + '_component_' + str(component_num) + '.png', bbox_inches='tight')
+                plt.savefig(f'{save_dir}/{tensor_name}_component_{component_num}.png', bbox_inches='tight')
                 plt.close()
 
         # Plot an ({example, color, direction}, x, y) tensor with subplots
         elif len(orig_shape) == 4 and dims[3] == 1 and dims[4] == 1:
             tensor = np.reshape(tensor, (-1, orig_shape[-1]))
             U, S, Vh = np.linalg.svd(tensor)  # Get the top 3 principal components
-            for component_num in range(3):
+            for component_num in range(max_components):
                 component = np.reshape(U[:,component_num], orig_shape[:-1])
                 component = component / np.max(np.abs(component))
                 strength = S[component_num] / tensor.shape[0]
+                if strength < cutoff:
+                    continue
                 n_plots = orig_shape[0]
 
                 # Make the subplots
@@ -284,14 +323,13 @@ if __name__ == "__main__":
                                      color=restricted_color_codes[plot_idx],
                                      fontweight="bold")
                     elif ax_dim == 'direction':
-                        direction_names = ["↓", "↘", "→", "↗", "↑", "↖", "←", "↙"]
                         ax.set_title(direction_names[plot_idx], fontsize=22)
 
                 plt.subplots_adjust(wspace=1)
                 fig.suptitle('component ' + str(component_num) + ', strength = ' + str(float(strength)))
                 plt.subplots_adjust(top=1.4)
-                plt.savefig(folder + task_name + '_' + tensor_name + '_component_' + str(component_num) + '.png', bbox_inches='tight')
+                plt.savefig(f'{save_dir}/{tensor_name}_component_{component_num}.png', bbox_inches='tight')
                 plt.close()
 
 
-print('done')
+print('done :)')
